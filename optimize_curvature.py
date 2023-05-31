@@ -1,10 +1,12 @@
 import os
+os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=0'
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
+    
 import sys
 import trimesh
 BASE_DIR = os.path.dirname(__file__)
 sys.path.append(BASE_DIR)
 ROOT_DIR = os.path.dirname(BASE_DIR)
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
 import tensorflow as tf
 import numpy as np
 from scipy import interpolate
@@ -22,9 +24,9 @@ import losses
 
 def init_graph(curvature_direction, parametrization, points_3D, faces_3D, boundary, non_boundary,boundary_normal, gt_normals):
     config = utils.init_config()
-    with tf.device('/gpu:'+str(0)):
+    with tf.device('/gpu:0'):
         batch = tf.Variable(0)
-        learning_rate = tf.placeholder(tf.float32, shape=[])
+        learning_rate = tf.compat.v1.placeholder(tf.float32, shape=[])
         boundary_np = boundary
 
         boundary = tf.constant(boundary, tf.int32) # point coordinate, edge 1 edge 2
@@ -76,7 +78,7 @@ def init_graph(curvature_direction, parametrization, points_3D, faces_3D, bounda
         target_curvature= utils.convert_to_3D(u, v, w, curvature_direction, faces_3D)
         target_curvature = tf.divide(target_curvature, losses.safe_norm(target_curvature, axis = -1)[:, tf.newaxis])
 
-        print('target triangles : ', float(faces_3D.shape[0].value)*0.66)
+        print('target triangles : ', float(faces_3D.shape[0])*0.66)
         neighbor_points_3D =tf.gather(converted_parametrization, neighbors)
         neighbor_points_3D = neighbor_points_3D - neighbor_points_3D[:,0:1]
 
@@ -87,14 +89,14 @@ def init_graph(curvature_direction, parametrization, points_3D, faces_3D, bounda
 
 
 
-        optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+        optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate)
         gvs = optimizer.compute_gradients(loss,var_list = [parametrization, weights])
         capped_gvs = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in gvs]
         train = optimizer.apply_gradients(capped_gvs,global_step=batch)
 
 
-        init = tf.global_variables_initializer()
-    session = tf.Session(config=config)
+        init = tf.compat.v1.global_variables_initializer()
+    session = tf.compat.v1.Session(config=config)
     session.run(init)
 
 
@@ -204,6 +206,8 @@ def optimize(session, ops, boundary, original_mesh, name, save_path):
 
 
 if __name__ == '__main__':
+    tf.compat.v1.disable_eager_execution()
+    
     shapes = ['100349']
     list_n_patches = [10]*len(shapes)
     seen = -1
@@ -222,11 +226,18 @@ if __name__ == '__main__':
                 cut_mesh = trimesh.load(os.path.join(data_path, 'cut_patch_{}.ply').format(mesh_number), process=False)
                 print(cut_mesh.scale)
                 #print(100.0/scale)
+                
+                # @sanghyun: [parametrization] has same number of entries as 
+                # number of vertices in [cut_mesh]. So each entry corresponds
+                # to parameter of each vertex in 2D plane.
                 parametrization = np.load(os.path.join(data_path, 'param_{}.npy').format(mesh_number))
 
+                # @sanghyun: make [parametrization] more realistically by considering
+                # distance between vertices in 3D.
                 parametrization = utils.resize_parametrization(parametrization, cut_mesh)
 
-
+                # @sanghyun: [boundary] contains indices of vertices that are located
+                # at the boundary of this mesh;
                 boundary = np.load(os.path.join(data_path, 'boundary_{}.npy').format(mesh_number))
                 normals = np.load(os.path.join(data_path, 'normals_{}.npy').format(mesh_number))
 

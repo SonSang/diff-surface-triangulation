@@ -28,7 +28,7 @@ def init_graph(curvature_direction, parametrization, points_3D, faces_3D, bounda
     config = utils.init_config()
     with tf.device('/gpu:'+str(0)):
         batch = tf.Variable(0)
-        learning_rate = tf.placeholder(tf.float32, shape=[])
+        learning_rate = tf.compat.v1.placeholder(tf.float32, shape=[])
         boundary = tf.constant(boundary, tf.int32)
         non_boundary = tf.constant(non_boundary, tf.int32)
         boundary_normal = tf.constant(boundary_normal, tf.float32)
@@ -54,6 +54,12 @@ def init_graph(curvature_direction, parametrization, points_3D, faces_3D, bounda
         normals = tf.constant(normals, dtype=tf.float32)
         points_idx = tf.constant(np.array(range(N_NEAREST_NEIGHBORS+1)))
         points_idx  = tf.tile(points_idx[tf.newaxis, :], [BATCH_SIZE, 1])
+        
+        # @sanghyun: Do WDT;
+        # [target_approx_triangles]: smooth inclusion score for each triangle;
+        # [target_indices]: vertex indices of each triangle;
+        # [exact_triangles]: hard inclusion score for each triangle;
+        # [local_indices]: local vertex indices that make up triangle; (local means for each center points)
         target_approx_triangles, target_indices, _, exact_triangles, local_indices = model.get_triangles_geo_batches(neighbor_points,
                                                                                                                             normals,
                                                                                                                             tf.abs(neighbor_weights),
@@ -90,15 +96,15 @@ def init_graph(curvature_direction, parametrization, points_3D, faces_3D, bounda
         loss =  point_distance2edge  + angles_loss + face_area_loss*10.0
 
 
-        optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+        optimizer = tf.compat.v1.train.AdamOptimizer(learning_rate=learning_rate)
         gvs = optimizer.compute_gradients(loss,var_list = [parametrization, weights])
         capped_gvs = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in gvs]
 
         train = optimizer.apply_gradients(capped_gvs,global_step=batch)
 
 
-        init = tf.global_variables_initializer()
-    session = tf.Session(config=config)
+        init = tf.compat.v1.global_variables_initializer()
+    session = tf.compat.v1.Session(config=config)
     session.run(init)
 
 
@@ -221,6 +227,8 @@ def optimize(session, ops, boundary, original_mesh, save_path):
 
 
 if __name__ == '__main__':
+    tf.compat.v1.disable_eager_execution()
+    
     shapes = ['100349']
     list_n_patches = [10]*len(shapes)
     save_path =  "data/triangle_size/{}"
@@ -237,11 +245,18 @@ if __name__ == '__main__':
                 print('shape {} patch number {} seen shapes {}/{}'.format(shape, mesh_number, seen_shapes, len(shapes)))
 
                 cut_mesh = trimesh.load(os.path.join(data_path, 'cut_patch_{}.ply').format(mesh_number), process=False)
+                
+                # @sanghyun: [parametrization] has same number of entries as 
+                # number of vertices in [cut_mesh]. So each entry corresponds
+                # to parameter of each vertex in 2D plane.
                 parametrization = np.load(os.path.join(data_path, 'param_{}.npy').format(mesh_number))
 
-
+                # @sanghyun: make [parametrization] more realistically by considering
+                # distance between vertices in 3D.
                 parametrization = utils.resize_parametrization(parametrization, cut_mesh)
 
+                # @sanghyun: [boundary] contains indices of vertices that are located
+                # at the boundary of this mesh;
                 boundary = np.load(os.path.join(data_path, 'boundary_{}.npy').format(mesh_number))
                 normals = np.load(os.path.join(data_path, 'normals_{}.npy').format(mesh_number))
                 mean_curvature = np.load(os.path.join(data_path, 'mean_curvature_{}.npy').format(mesh_number))

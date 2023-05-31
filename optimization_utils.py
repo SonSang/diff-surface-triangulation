@@ -105,8 +105,8 @@ def make_boundary(boundary, vertices):
 
 
 def init_config():
-    tf.reset_default_graph()
-    config = tf.ConfigProto()
+    tf.compat.v1.reset_default_graph()
+    config = tf.compat.v1.ConfigProto()
     config.gpu_options.allow_growth = True
     config.allow_soft_placement = True
     config.log_device_placement = False
