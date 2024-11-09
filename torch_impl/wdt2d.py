@@ -1,4 +1,5 @@
 import torch as th
+from pytorch3d.ops import knn_points
 
 class WDT(th.nn.Module):
     
@@ -37,13 +38,22 @@ class WDT(th.nn.Module):
         num_points = len(points)
         
         # distances = [# point, # point]
-        distances = (points.unsqueeze(1).expand((-1, num_points, -1)) - \
-                        points.unsqueeze(0).expand((num_points, -1, -1))).norm(p=2, dim=-1)
+        # distances = (points.unsqueeze(1).expand((-1, num_points, -1)) - \
+        #                 points.unsqueeze(0).expand((num_points, -1, -1))).norm(p=2, dim=-1)
         
-        nn_size = num_points if self.nn_size == -1 else self.nn_size
+        nn_size = num_points if self.nn_size == -1 else self.nn_size + 1
+        if nn_size > num_points:
+            nn_size = num_points
         
         # neighbors = [# point, # nn_size]
-        _, neighbors = th.topk(distances, k=nn_size, dim=-1, largest=False,)
+        # _, neighbors = th.topk(distances, k=nn_size, dim=-1, largest=False,)
+        
+        knn_result = knn_points(
+            points.unsqueeze(0),
+            points.unsqueeze(0),
+            K=nn_size,
+        )
+        neighbors = knn_result.idx.squeeze(0)
         
         tmp_points = points.unsqueeze(0).expand((num_points, -1, -1))
         tmp_neighbors = neighbors.unsqueeze(-1).expand((-1, -1, 2))
@@ -71,7 +81,7 @@ class WDT(th.nn.Module):
         
         num_points = len(points)
         
-        nn_size = self.get_nn_size(num_points)
+        nn_size = neighbors.shape[1] - 1
         pairs = self.index_pairs(nn_size, points.device)
         
         tmp_normals = normals.unsqueeze(0).expand([num_points, -1, -1])
@@ -132,7 +142,11 @@ class WDT(th.nn.Module):
         # indices of intersection points that are closest to the center points (there could be duplicate, because direction_i could be all False for some points);
         # shape = [# points, # topk * 4]
         closest_intersections_idx = th.cat([closest_intersections_idx1, closest_intersections_idx2, closest_intersections_idx3, closest_intersections_idx4], axis=1)
-
+        
+        # @ test code to test every intersection point;
+        # closest_intersections_idx = th.arange(intersections.shape[1], dtype=th.long, device=device).unsqueeze(0).expand([num_points, -1])
+        # self.num_trigs = closest_intersections_idx.shape[1]
+        
         # for each intersection point, decide indices of half planes related to it;
         # e_pairs.shape = [# points, # pairs, 2]
         # e_closest_intersections_idx.shape = [# points, # topk * 4, 2]
@@ -178,10 +192,10 @@ class WDT(th.nn.Module):
         to_ignore[(index_pairs_0, index_pairs_1, index_pairs_2)] = True
         
         inter_dist0 = th.where(to_ignore, -th.ones_like(inter_dist00) * 1e10, inter_dist00)
-        inter_dist = th.where(th.abs(inter_dist0) < self.EPS, -th.ones_like(inter_dist0) * 1e10, inter_dist0)
+        #inter_dist = th.where(th.abs(inter_dist0) < self.EPS, -th.ones_like(inter_dist0) * 1e10, inter_dist0)
         
         # get exact DTs;
-        is_dt_discrete = self.discrete_dt(inter_dist)
+        is_dt_discrete = self.discrete_dt(inter_dist0)
         
         # get smooth DTs, note that we use [inter_dist0], not [inter_dist];
         is_dt_smooth = self.smooth_dt(inter_dist0)
@@ -209,7 +223,7 @@ class WDT(th.nn.Module):
         
         # cull out triangles with too small scores;
         
-        valid_indices = th.where(th.logical_and(is_dt_discrete > 1e-5, is_dt_smooth > 1e-5))
+        valid_indices = th.where(is_dt_smooth > 1e-5)
         is_dt_discrete = is_dt_discrete[valid_indices]
         is_dt_smooth = is_dt_smooth[valid_indices]
         dt_indices = dt_indices[valid_indices]
